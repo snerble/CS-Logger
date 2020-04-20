@@ -1,4 +1,4 @@
-﻿using Logging.Highlighting;
+using Logging.Highlighting;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -145,6 +145,7 @@ namespace Logging
 		/// <param name="message">The value to write.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
 		public void Debug(object message, bool stackTrace = false) => Write(Level.DEBUG, message, stackTrace);
+
 		/// <summary>
 		/// Writes a message with the FATAL log level.
 		/// </summary>
@@ -158,6 +159,7 @@ namespace Logging
 		/// <param name="cause">The exception that caused this message.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
 		public void Fatal(object message, Exception cause, bool stackTrace = true) => Write(Level.FATAL, message, new StackTrace(cause, UseFileInfo), stackTrace);
+
 		/// <summary>
 		/// Writes a message with the ERROR log level.
 		/// </summary>
@@ -172,30 +174,35 @@ namespace Logging
 		/// <param name="cause">The exception that caused this message. This exception's traceback will be used.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
 		public void Error(object message, Exception cause, bool stackTrace = true) => Write(Level.ERROR, message, new StackTrace(cause, UseFileInfo), stackTrace);
+
 		/// <summary>
 		/// Writes a message with the WARN log level.
 		/// </summary>
 		/// <param name="message">The value to write.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
 		public void Warning(object message, bool stackTrace = false) => Write(Level.WARN, message, stackTrace);
+
 		/// <summary>
 		/// Writes a message with the INFO log level.
 		/// </summary>
 		/// <param name="message">The value to write.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
 		public void Info(object message, bool stackTrace = false) => Write(Level.INFO, message, stackTrace);
+
 		/// <summary>
 		/// Writes a message with the CONFIG log level.
 		/// </summary>
 		/// <param name="message">The value to write.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
 		public void Config(object message, bool stackTrace = false) => Write(Level.CONFIG, message, stackTrace);
+
 		/// <summary>
 		/// Writes a message with the FINE log level.
 		/// </summary>
 		/// <param name="message">The value to write.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
 		public void Fine(object message, bool stackTrace = false) => Write(Level.FINE, message, stackTrace);
+
 		/// <summary>
 		/// Writes a message with the TRACE log level.
 		/// </summary>
