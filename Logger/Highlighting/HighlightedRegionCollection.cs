@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Linq;
@@ -104,7 +104,7 @@ namespace Logging.Highlighting
 			{
 				// Write up until the nested region if the start indices aren't equal
 				if (!nested.Range.Start.Equals(offset))
-					Console.Write(InputText[offset..nested.Range.Start.Value]);
+					Console.Out.Write(InputText[offset..nested.Range.Start.Value]);
 				// Recurse with the nested region
 				Print(nested);
 				// Shift the offset to after the nested region
@@ -112,7 +112,7 @@ namespace Logging.Highlighting
 			}
 			// Write the remaining text if the offset does not exceed the end index
 			if (offset <= current.Range.End.Value - 1)
-				Console.Write(InputText[offset..current.Range.End]);
+				Console.Out.Write(InputText[offset..current.Range.End]);
 
 			// Reset to the previous color
 			Console.ForegroundColor = prevColor;
