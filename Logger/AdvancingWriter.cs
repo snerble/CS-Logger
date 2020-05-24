@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -136,7 +136,7 @@ namespace Logging
 			Duration = duration;
 			FileTimeStamp = DateTime.Now.Date.Add(timeOfDay);
 			if (FileTimeStamp <= DateTime.Now)
-				FileTimeStamp += (int)((DateTime.Now - FileTimeStamp) / Duration + 1) * Duration;
+				FileTimeStamp += (int)(((DateTime.Now - FileTimeStamp) / Duration) + 1) * Duration;
 
 			// in case of overwriting, reset the creation time
 			if (System.IO.File.Exists(File)) System.IO.File.SetCreationTime(File, FileTimeStamp);
@@ -151,7 +151,7 @@ namespace Logging
 		{
 			while (Active)
 			{
-				var delay = FileTimeStamp.Subtract(DateTime.Now);
+				TimeSpan delay = FileTimeStamp.Subtract(DateTime.Now);
 
 				try
 				{ Thread.Sleep(delay); }
@@ -178,16 +178,16 @@ namespace Logging
 				var file = Files.Last();
 				var archiveName = Archive ?? Path.ChangeExtension(file, "zip");
 
-				var mode = ZipArchiveMode.Update;
+				ZipArchiveMode mode = ZipArchiveMode.Update;
 				if (!Archives.Contains(archiveName) && System.IO.File.Exists(archiveName))
 				{
 					System.IO.File.Delete(archiveName);
 					mode = ZipArchiveMode.Create;
 				}
 
-				using (var archive = ZipFile.Open(archiveName, mode))
+				using (ZipArchive archive = ZipFile.Open(archiveName, mode))
 				{
-					var entry = archive.CreateEntryFromFile(
+					ZipArchiveEntry entry = archive.CreateEntryFromFile(
 						file,
 						$"{Path.GetFileNameWithoutExtension(file)}.{(mode == ZipArchiveMode.Update ? archive.Entries.Count : 0)}{Path.GetExtension(file)}"
 					);

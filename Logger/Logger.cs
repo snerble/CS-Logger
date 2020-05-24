@@ -135,9 +135,9 @@ namespace Logging
 		public Logger(Level level, string name, string format, params TextWriter[] outStreams)
 		{
 			LogLevel = level;
-			foreach (var stream in outStreams)
+			foreach (TextWriter stream in outStreams)
 				OutputStreams.Add(stream);
-			Name = name ?? $"{GetType().Name}@{GetHashCode().ToString("x")}";
+			Name = name ?? $"{GetType().Name}@{GetHashCode():x}";
 			Format = format ?? Format;
 		}
 
@@ -234,7 +234,7 @@ namespace Logging
 			if (Silent) return;
 			if (disposedValue) throw new ObjectDisposedException(ToString());
 
-			foreach (var logger in Children) logger.Write(level, message, stack, includeStackTrace);
+			foreach (Logger logger in Children) logger.Write(level, message, stack, includeStackTrace);
 			if (LogLevel.Value < level.Value) return;
 
 			// Get the formatted log record
@@ -246,13 +246,17 @@ namespace Logging
 			else
 			{
 				// Write the log record to every stream
-				foreach (var stream in OutputStreams)
+				foreach (TextWriter stream in OutputStreams)
 				{
 					lock (stream)
 					{
-						if (UseConsoleHighlighting && stream == Console.Out) WriteConsoleRecord(record);
-						else stream.WriteLine(record);
-						stream.Flush();
+						if (UseConsoleHighlighting && stream == Console.Out)
+							WriteConsoleRecord(record);
+						else
+						{
+							stream.WriteLine(record);
+							stream.Flush();
+						}
 					}
 				}
 			}
@@ -265,9 +269,9 @@ namespace Logging
 		protected void WriteConsoleRecord(string record)
 		{
 			if (!Highlighters.Any()) return;
-			
+
 			// Create base highlighter collection instance
-			var highlights = Highlighters[0].GetHighlights(ref record);
+			HighlightedRegionCollection highlights = Highlighters[0].GetHighlights(ref record);
 			// Combine all the other collections with the first
 			for (int i = 1; i < Highlighters.Count; i++)
 				highlights.AddRange(Highlighters[i].GetHighlights(ref record));
@@ -301,13 +305,13 @@ namespace Logging
 		/// </summary>
 		public void Close()
 		{
-			foreach (var logger in Children)
+			foreach (Logger logger in Children)
 			{
 				logger.Close();
 				_children.Remove(logger);
-				foreach (var parent in Parents) parent.Detach(this);
+				foreach (Logger parent in Parents) parent.Detach(this);
 			}
-			foreach (var stream in OutputStreams) stream.Close();
+			foreach (TextWriter stream in OutputStreams) stream.Close();
 		}
 
 		/// <summary>
@@ -338,7 +342,7 @@ namespace Logging
 
 			// loops through all stacktrace frames and fills in the previous values
 			int i = 0;
-			foreach (var frame in stack.GetFrames())
+			foreach (StackFrame frame in stack.GetFrames())
 			{
 				i++;
 				callerFunc = frame.GetMethod();
@@ -396,12 +400,12 @@ namespace Logging
 				if (disposing)
 				{
 					// New list copy because otherwise we are changing the list we are iterating through
-					foreach (var logger in new List<Logger>(Children))
+					foreach (Logger logger in new List<Logger>(Children))
 						logger.Dispose();
-					foreach (var stream in OutputStreams)
+					foreach (TextWriter stream in OutputStreams)
 						stream.Dispose();
 					// Same reason for new list as previous
-					foreach (var parent in new List<Logger>(Parents)) parent.Detach(this);
+					foreach (Logger parent in new List<Logger>(Parents)) parent.Detach(this);
 				}
 
 				disposedValue = true;
@@ -420,7 +424,7 @@ namespace Logging
 		/// <summary>
 		/// An enum of attributes used in log records
 		/// </summary>
-		enum RecordAttributes
+		public enum RecordAttributes
 		{
 			asctime,
 			created,

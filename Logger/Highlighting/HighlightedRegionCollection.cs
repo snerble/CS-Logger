@@ -36,7 +36,7 @@ namespace Logging.Highlighting
 		{
 			InputText = input;
 
-			var matches = highlighter.Regex.Matches(input);
+			MatchCollection matches = highlighter.Regex.Matches(input);
 			foreach (Match match in matches)
 			{
 				// Replace the captured text with null characters
@@ -48,7 +48,8 @@ namespace Logging.Highlighting
 					if (group.Length == 0)
 					{
 						// Increment color index if more colors are available
-						if (colorIndex + 1 < highlighter.Colors.Count) colorIndex++;
+						if (colorIndex + 1 < highlighter.Colors.Count)
+							colorIndex++;
 						continue;
 					}
 					if (first)
@@ -59,7 +60,8 @@ namespace Logging.Highlighting
 					// Create new region
 					Add(new HighlightedRegion(group.Index, group.Length, highlighter.Colors.ElementAt(colorIndex)));
 					// Increment color index if more colors are available
-					if (colorIndex + 1 < highlighter.Colors.Count) colorIndex++;
+					if (colorIndex + 1 < highlighter.Colors.Count)
+						colorIndex++;
 					// Remove the captured text from the input string
 					char[] _input = input.ToCharArray();
 					new string('\0', group.Length).CopyTo(0, _input, group.Index, group.Length);
@@ -74,7 +76,7 @@ namespace Logging.Highlighting
 		public void Print()
 		{
 			Print(new HighlightedRegion(0, InputText.Length, Console.ForegroundColor));
-			Console.WriteLine();
+			Console.WriteLine('\r');
 		}
 		/// <summary>
 		/// Writes all regions recursively.
@@ -82,7 +84,7 @@ namespace Logging.Highlighting
 		private void Print(HighlightedRegion current)
 		{
 			// Cache the current color for later and apply the current highlight color
-			var prevColor = Console.ForegroundColor;
+			ConsoleColor prevColor = Console.ForegroundColor;
 			Console.ForegroundColor = current.Color;
 
 			// Store offset because nested regions will shift this
@@ -99,20 +101,24 @@ namespace Logging.Highlighting
 				}
 				return false;
 			}).ToList();
+
 			// Loop through all nested regions
-			foreach (var nested in nestedRegions)
+			foreach (HighlightedRegion nested in nestedRegions)
 			{
 				// Write up until the nested region if the start indices aren't equal
 				if (!nested.Range.Start.Equals(offset))
-					Console.Out.Write(InputText[offset..nested.Range.Start.Value]);
+					Console.Write(InputText[offset..nested.Range.Start.Value]);
+
 				// Recurse with the nested region
 				Print(nested);
+
 				// Shift the offset to after the nested region
 				offset = nested.Range.End.Value;
 			}
+
 			// Write the remaining text if the offset does not exceed the end index
 			if (offset <= current.Range.End.Value - 1)
-				Console.Out.Write(InputText[offset..current.Range.End]);
+				Console.Write(InputText[offset..current.Range.End]);
 
 			// Reset to the previous color
 			Console.ForegroundColor = prevColor;
@@ -124,7 +130,7 @@ namespace Logging.Highlighting
 		/// <param name="collection">The collection whose elements to add to this collection.</param>
 		public void AddRange(IEnumerable<HighlightedRegion> collection)
 		{
-			foreach (var item in collection)
+			foreach (HighlightedRegion item in collection)
 				Add(item);
 		}
 		/// <summary>
@@ -133,22 +139,24 @@ namespace Logging.Highlighting
 		/// <param name="item">The item to add.</param>
 		public void Add(HighlightedRegion item)
 		{
-			//// Remove existing elements that are identical in range to the new item
+			// Remove existing elements that are identical in range to the new item
 			var toRemove = this.Where(x => item.Range.Equals(x.Range)).ToList();
-			foreach (var region in toRemove) Remove(region);
+			foreach (HighlightedRegion region in toRemove)
+				Remove(region);
 
 			// Get the index to insert the new item into
 			int index = 0;
 			for (; index < Count; index++)
 			{
-				if (this[index].Range.Start.Value > item.Range.Start.Value) break;
-				else if(this[index].Range.Start.Equals(item.Range.Start))
+				if (this[index].Range.Start.Value > item.Range.Start.Value)
+					break;
+				else if (this[index].Range.Start.Equals(item.Range.Start))
 				{
 					index++;
 					break;
 				}
 			}
-				
+
 			// Insert the new item
 			Elements.Insert(index, item);
 		}
