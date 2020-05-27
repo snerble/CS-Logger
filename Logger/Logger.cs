@@ -16,7 +16,6 @@ namespace Logging
 	/// <para>
 	/// These loggers support a hierarchy structure of <see cref="Logger"/> objects,
 	/// where one parent logger passes its log messages to any child loggers.
-	/// </para>
 	/// </summary>
 	public class Logger : IDisposable
 	{
@@ -99,6 +98,11 @@ namespace Logging
 		/// <para>This also prevents writing to child loggers, but it does not silence it's children.</para>
 		/// </summary>
 		public bool Silent { get; set; } = false;
+		/// <summary>
+		/// Gets or sets whether this <see cref="Logger"/> flushes it's output streams after each
+		/// log record. <see langword="false"/> by default.
+		/// </summary>
+		public bool AutoFlush { get; set; } = false;
 
 		/// <summary>
 		/// Gets or sets a value indicating the scheduling priority of the logging thread.
@@ -283,14 +287,11 @@ namespace Logging
 		/// <param name="includeStackTrace">Set whether to include a full stacktrace in the log record.</param>
 		private void Write(Record record)
 		{
-			// Deconstruct the record
-			(Level level, object message, StackTrace stack, bool includeStackTrace, _) = record;
-
 			if (Silent) return;
 			if (disposedValue) throw new ObjectDisposedException(ToString());
 
 			foreach (Logger logger in Children) logger.Write(record);
-			if (LogLevel.Value < level.Value) return;
+			if (LogLevel.Value < record.level.Value) return;
 
 			// Get the formatted log record
 			var logMessage = GetRecord(record);
@@ -310,7 +311,8 @@ namespace Logging
 						else
 						{
 							stream.WriteLine(logMessage);
-							stream.Flush();
+							if (AutoFlush)
+								stream.Flush();
 						}
 					}
 				}
