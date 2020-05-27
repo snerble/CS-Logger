@@ -1,5 +1,6 @@
 using Logging.Highlighting;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -20,9 +21,9 @@ namespace Logging
 	public class Logger : IDisposable
 	{
 		/// <summary>
-		/// The name of this logger object
+		/// Gets or sets name of this logger object
 		/// </summary>
-		public string Name { get; }
+		public string Name { get; set; }
 		/// <summary>
 		/// The time when this logger was created
 		/// </summary>
@@ -100,6 +101,35 @@ namespace Logging
 		public bool Silent { get; set; } = false;
 
 		/// <summary>
+		/// Gets or sets a value indicating the scheduling priority of the logging thread.
+		/// <para/>
+		/// Setting a non-<see langword="null"/> value will disable the dynamic thread priority
+		/// system.
+		/// </summary>
+		public ThreadPriority? Priority
+		{
+			get => worker.Priority;
+			set
+			{
+				if (!value.HasValue)
+				{
+					worker.Priority = ThreadPriority.Highest;
+					overridePriority = false;
+				}
+				else
+				{
+					overridePriority = true;
+					worker.Priority = value.Value;
+				}
+			}
+		}
+
+		private Thread worker;
+		private bool running = true;
+		private BlockingCollection<Record> records = new BlockingCollection<Record>();
+		private bool overridePriority = false;
+
+		/// <summary>
 		/// Creates a new instance of <see cref="Logger"/>.
 		/// </summary>
 		/// <remarks>
@@ -111,34 +141,56 @@ namespace Logging
 			: this(level, null, outStreams)
 		{ }
 		/// <summary>
-		/// Creates a new instance of <see cref="Logger"/> with a custom name.
-		/// </summary>
-		/// <remarks>
-		/// This constructor supports custom log levels.
-		/// </remarks>
-		/// <param name="level">The maximum logging level, represented as <see cref="int"/>.</param>
-		/// <param name="name">The name of the new logger. If null, a default name with the classname and hashcode will be chosen.</param>
-		/// <param name="outStreams">A collection of unique <see cref="TextWriter"/> objects.</param>
-		public Logger(Level level, string name, params TextWriter[] outStreams)
-			: this(level, name, null, outStreams)
-		{ }
-		/// <summary>
 		/// Creates a new instance of <see cref="Logger"/> with a custom name and format.
 		/// </summary>
 		/// <remarks>
 		/// This constructor supports custom log levels.
 		/// </remarks>
 		/// <param name="level">The maximum logging level, represented as <see cref="int"/>.</param>
-		/// <param name="name">The name of the new logger. If null, a default name with the classname and hashcode will be chosen.</param>
 		/// <param name="format">The format used for log records. If null, the default format is used.</param>
 		/// <param name="outStreams">A collection of unique <see cref="TextWriter"/> objects.</param>
-		public Logger(Level level, string name, string format, params TextWriter[] outStreams)
+		public Logger(Level level, string format, params TextWriter[] outStreams)
 		{
 			LogLevel = level;
 			foreach (TextWriter stream in outStreams)
 				OutputStreams.Add(stream);
-			Name = name ?? $"{GetType().Name}@{GetHashCode():x}";
+			Name = $"{GetType().Name}@{GetHashCode():x}";
 			Format = format ?? Format;
+
+			worker = new Thread(Run)
+			{
+				Name = "Logger Worker",
+			};
+			worker.Start();
+		}
+
+		private void Run()
+		{
+			try
+			{
+				while (running)
+				{
+					// Await a new record
+					Record record = records.Take();
+					
+					if (!overridePriority)
+					{
+						// Dynamically adjust the worker thread priority by checking the amount of remaining records
+						worker.Priority = records.Count switch
+						{
+							int n when (100 > n) => ThreadPriority.BelowNormal,
+							int n when (250 > n && n >= 100) => ThreadPriority.Normal,
+							int n when (1000 > n && n >= 500) => ThreadPriority.AboveNormal,
+							int n when (n >= 1000) => ThreadPriority.Highest,
+							_  => ThreadPriority.Normal // this case label should never match
+						};
+					}
+
+					Write(record);
+				}
+			}
+			catch (InvalidOperationException) { }
+			catch (ThreadInterruptedException) { }
 		}
 
 		#region Default Logging Methods
@@ -161,7 +213,7 @@ namespace Logging
 		/// <param name="message">The value to write.</param>
 		/// <param name="cause">The exception that caused this message.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
-		public void Fatal(object message, Exception cause, bool stackTrace = true) => Write(Level.FATAL, message, new StackTrace(cause, UseFileInfo), stackTrace);
+		public void Fatal(object message, Exception cause, bool stackTrace = true) => records.Add(new Record(Level.FATAL, message, new StackTrace(cause, UseFileInfo), stackTrace));
 
 		/// <summary>
 		/// Writes a message with the ERROR log level.
@@ -176,7 +228,7 @@ namespace Logging
 		/// <param name="message">The value to write.</param>
 		/// <param name="cause">The exception that caused this message. This exception's traceback will be used.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
-		public void Error(object message, Exception cause, bool stackTrace = true) => Write(Level.ERROR, message, new StackTrace(cause, UseFileInfo), stackTrace);
+		public void Error(object message, Exception cause, bool stackTrace = true) => records.Add(new Record(Level.ERROR, message, new StackTrace(cause, UseFileInfo), stackTrace));
 
 		/// <summary>
 		/// Writes a message with the WARN log level.
@@ -220,7 +272,7 @@ namespace Logging
 		/// <param name="level">A <see cref="Level"/> message level.</param>
 		/// <param name="message">The value to write.</param>
 		/// <param name="stackTrace">Set whether to include a full stacktrace in the log record.</param>
-		public void Write(Level level, object message, bool stackTrace = false) => Write(level, message, new StackTrace(UseFileInfo), stackTrace);
+		public void Write(Level level, object message, bool stackTrace = false) => records.Add(new Record(level, message, new StackTrace(UseFileInfo), stackTrace));
 		/// <summary>
 		/// Writes the log to the output streams if the level is lower or equal to the set logging level.
 		/// <para>This function is thread-safe due to it's stream locking.</para>
@@ -229,20 +281,23 @@ namespace Logging
 		/// <param name="message">The value to write.</param>
 		/// <param name="stack">The stacktrace to reference in the log record.</param>
 		/// <param name="includeStackTrace">Set whether to include a full stacktrace in the log record.</param>
-		private void Write(Level level, object message, StackTrace stack, bool includeStackTrace)
+		private void Write(Record record)
 		{
+			// Deconstruct the record
+			(Level level, object message, StackTrace stack, bool includeStackTrace, _) = record;
+
 			if (Silent) return;
 			if (disposedValue) throw new ObjectDisposedException(ToString());
 
-			foreach (Logger logger in Children) logger.Write(level, message, stack, includeStackTrace);
+			foreach (Logger logger in Children) logger.Write(record);
 			if (LogLevel.Value < level.Value) return;
 
 			// Get the formatted log record
-			var record = GetRecord(level, message?.ToString(), stack, includeStackTrace);
+			var logMessage = GetRecord(record);
 
 			// Write the record to the the Trace class if no outputstreams are available
 			if (!OutputStreams.Any())
-				System.Diagnostics.Trace.WriteLine(record);
+				System.Diagnostics.Trace.WriteLine(logMessage);
 			else
 			{
 				// Write the log record to every stream
@@ -251,10 +306,10 @@ namespace Logging
 					lock (stream)
 					{
 						if (UseConsoleHighlighting && stream == Console.Out)
-							WriteConsoleRecord(record);
+							WriteConsoleRecord(logMessage);
 						else
 						{
-							stream.WriteLine(record);
+							stream.WriteLine(logMessage);
 							stream.Flush();
 						}
 					}
@@ -321,8 +376,16 @@ namespace Logging
 		/// TL;DR - Big dumb block of code that fills in the blanks. Replaces and formats stuff. Makes the log look nice.
 		/// </remarks>
 		/// <param name="msg">The string to format.</param>
-		protected string GetRecord(Level level, string message, StackTrace stack, bool includeStackTrace)
+		protected string GetRecord(Record record)
 		{
+			(
+				Level level,
+				object message,
+				StackTrace stack,
+				bool includeStackTrace,
+				DateTime creation
+			) = record;
+
 			// check if stackinfo has been specified. if not, stack info will always be appended.
 			bool appendStackTrace = !Regex.IsMatch(Format, ".*{stackinfo.*", RegexOptions.IgnoreCase);
 
@@ -369,21 +432,21 @@ namespace Logging
 
 			// format all attributes 
 			return string.Format(format,
-				DateTime.Now,
-				DateTimeOffset.Now.ToUnixTimeMilliseconds()/1000d,
+				creation,
+				((DateTimeOffset)creation).ToUnixTimeMilliseconds()/1000d,
 				callerType?.Name,
 				Path.GetFileName(fileName),
 				callerFunc.Name,
 				level,
 				level.Value,
 				lineno,
-				message,
+				message?.ToString(),
 				callerFunc.Module,
 				Name,
 				fileName,
 				Process.GetCurrentProcess().Id,
 				Process.GetCurrentProcess().ProcessName,
-				DateTime.Now - Process.GetCurrentProcess().StartTime,
+				creation - Process.GetCurrentProcess().StartTime,
 				includeStackTrace ? "\n" + stackTrace.ToString().Remove(stackTrace.ToString().Length - 2, 2).Remove(0, 0) : null,
 				Thread.CurrentThread.ManagedThreadId,
 				Thread.CurrentThread.Name
@@ -399,6 +462,11 @@ namespace Logging
 			{
 				if (disposing)
 				{
+					running = false;
+					records.CompleteAdding();
+					worker?.Interrupt();
+					worker?.Join();
+					
 					// New list copy because otherwise we are changing the list we are iterating through
 					foreach (Logger logger in new List<Logger>(Children))
 						logger.Dispose();
@@ -444,6 +512,33 @@ namespace Logging
 			stackInfo,
 			threadId,
 			threadName
+		}
+
+		protected struct Record
+		{
+			public Level level;
+			public object message;
+			public StackTrace stackTrace;
+			public bool includeStackTrace;
+			public DateTime creation;
+
+			public Record(Level level, object message, StackTrace stackTrace, bool includeStackTrace)
+			{
+				this.level = level ?? throw new ArgumentNullException(nameof(level));
+				this.message = message ?? throw new ArgumentNullException(nameof(message));
+				this.stackTrace = stackTrace ?? throw new ArgumentNullException(nameof(stackTrace));
+				this.includeStackTrace = includeStackTrace;
+				creation = DateTime.Now;
+			}
+
+			public void Deconstruct(out Level level, out object message, out StackTrace stackTrace, out bool includeStackTrace, out DateTime creation)
+			{
+				level = this.level;
+				message = this.message;
+				stackTrace = this.stackTrace;
+				includeStackTrace = this.includeStackTrace;
+				creation = this.creation;
+			}
 		}
 	}
 }
