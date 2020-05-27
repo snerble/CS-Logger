@@ -24,17 +24,18 @@ namespace Logging
 		private DateTime FileTimeStamp;
 
 		private readonly Thread FileAdvancerThread;
-		private TextWriter Stream;
+		private StreamWriter Stream;
 
 		/// <summary>
-		/// Gets or sets path of the files to create. This can be an unformatted string if <see cref="Compression"/>
-		/// is set to true.
+		/// Gets the path of the files to create. This value in the constructor.
+		/// <para/>
+		/// This supports the following formatting arguments:
+		/// <list type="bullet">
+		/// <item><c>{0} -> </c> The time of the file's creation.</item>
+		/// <item><c>{1} -> </c> The time this <see cref="AdvancingWriter"/> was created.</item>
+		/// <item><c>{2} -> </c> The amount of files this <see cref="AdvancingWriter"/> has written up to this point.</item>
+		/// </list>
 		/// </summary>
-		/// <remarks>
-		/// This path may include 3 string format items. The first specifies the time of it's creation.
-		/// The third specifies the time this writer was created.
-		/// The third specifies how many files have been written by this writer.
-		/// </remarks>
 		public string File
 		{
 			get
@@ -54,14 +55,16 @@ namespace Logging
 
 		/// <summary>
 		/// Gets or sets path of the compressed archives to create. Only used when <see cref="Compression"/> is set to true.
+		/// <para/>
+		/// This supports the following string format arguments:
+		/// <list type="bullet">
+		/// <item><c>{0} -> </c> The time of the file's creation.</item>
+		/// <item><c>{1} -> </c> The time this <see cref="AdvancingWriter"/> was created.</item>
+		/// <item><c>{2} -> </c> The amount of files this <see cref="AdvancingWriter"/> has written up to this point.</item>
+		/// </list>
 		/// </summary>
 		/// <remarks>
-		/// This path may include 3 string format items. The first specifies the time of it's creation.
-		/// The third specifies the time this writer was created.
-		/// The third specifies how many archives have been written by this writer.
-		/// <para>
 		/// Once set, this returns the same formatted string every time. Resets when setting the format again.
-		/// </para>
 		/// </remarks>
 		public string Archive
 		{
@@ -88,12 +91,16 @@ namespace Logging
 				if (archiveFormat != null) return;
 				archiveFormat = value;
 				_archive = null;
-				if (!System.IO.File.Exists(archiveFormat))
-					System.IO.File.Create(Archive).Dispose();
 			}
 		}
 		private string archiveFormat;
 		private string _archive;
+
+		/// <summary>
+		/// Returns the path of the file that is currently open, or <see langword="null"/>
+		/// if no file is open.
+		/// </summary>
+		public string CurrentFile { get; private set; }
 
 		private bool Active = true;
 
@@ -104,30 +111,39 @@ namespace Logging
 		/// <summary>
 		/// Gets or sets whether this <see cref="AdvancingWriter"/> commpresses it's last file when closing or disposing.
 		/// <para><see cref="Compression"/> must be true for this to have any effect.</para>
+		/// <para/>
+		/// <see langword="true"/> by default.
 		/// </summary>
 		public bool CompressOnClose { get; set; } = true;
 
-		private readonly List<string> Files = new List<string>();
-		private readonly List<string> Archives = new List<string>();
+#nullable enable
+		private string? lastArchive;
+#nullable restore
+
+		/// <summary>
+		/// Invoked when this <see cref="AdvancingWriter"/> is advancing onto the next
+		/// file.
+		/// </summary>
+		public event EventHandler<FileAdvancingEventArgs> Advancing;
 
 		/// <summary>
 		/// Creates a new instance of <see cref="AdvancingWriter"/> that advances it's file at midnight.
 		/// </summary>
-		/// <param name="file">The path of the file to write. This may include 2 formatting items. (See summary)</param>
+		/// <param name="file">The path of the file to write. See <seealso cref="File"/> for more details.</param>
 		public AdvancingWriter(string file) : this(file, new TimeSpan(24, 0, 0))
 		{ }
 		/// <summary>
 		/// Creates a new instance of <see cref="AdvancingWriter"/> that advances it's file after a given period of time,
-		/// starting from the time this instance was created.
+		/// starting from the time this instance was created at midnight.
 		/// </summary>
-		/// <param name="file">The path of the file to write. This may include 2 formatting items. (See summary)</param>
+		/// <param name="file">The path of the file to write. See <seealso cref="File"/> for more details.</param>
 		/// <param name="duration">The timespan between consecutive files.</param>
 		public AdvancingWriter(string file, TimeSpan duration) : this(file, DateTime.Now.TimeOfDay, duration)
 		{ }
 		/// <summary>
 		/// Creates a new instance of <see cref="AdvancingWriter"/> that advances it's file after a given period of time.
-		/// <para>The first advancement will happen at &lt;<paramref name="timeOfDay"/>&gt;, afther which all advancements
-		/// happen every &lt;<paramref name="duration"/>&gt;.</para>
+		/// <para>The first advancement will happen at <paramref name="timeOfDay"/>, after which all advancements
+		/// happen every <paramref name="duration"/>.</para>
 		/// </summary>
 		/// <param name="file">The path of the file to write. This may include 2 formatting items. (See summary)</param>
 		public AdvancingWriter(string file, TimeSpan timeOfDay, TimeSpan duration)
@@ -141,8 +157,8 @@ namespace Logging
 			// in case of overwriting, reset the creation time
 			if (System.IO.File.Exists(File)) System.IO.File.SetCreationTime(File, FileTimeStamp);
 
-			Stream = new StreamWriter(File) { AutoFlush = true };
-			Files.Add(File);
+			CurrentFile = File;
+			Stream = new StreamWriter(CurrentFile) { AutoFlush = true };
 			FileAdvancerThread = new Thread(new ThreadStart(AdvanceFile)) { Name = "FileAdvancerThread" };
 			FileAdvancerThread.Start();
 		}
@@ -160,10 +176,19 @@ namespace Logging
 
 				lock (Stream)
 				{
+					Stream.Close();
+
+					// Invoke the Advancing event
+					string newFile = File;
+					Advancing(this, new FileAdvancingEventArgs(CurrentFile, newFile));
+
+					// Dispose the stream and compress if specified
 					FinalizeStream();
 					FileTimeStamp += Duration;
+					
+					// Create stream for new file
 					Stream = new StreamWriter(File) { AutoFlush = true };
-					Files.Add(File);
+					CurrentFile = newFile;
 				}
 			}
 		}
@@ -173,13 +198,15 @@ namespace Logging
 			lock (Stream)
 			{
 				Stream.Dispose();
-				if (!Compression) return;
 
-				var file = Files.Last();
-				var archiveName = Archive ?? Path.ChangeExtension(file, "zip");
+				// Skip zip archive compression if false
+				if (!Compression)
+					return;
+
+				var archiveName = Archive ?? Path.ChangeExtension(CurrentFile, "zip");
 
 				ZipArchiveMode mode = ZipArchiveMode.Update;
-				if (!Archives.Contains(archiveName) && System.IO.File.Exists(archiveName))
+				if (lastArchive != archiveName && System.IO.File.Exists(archiveName))
 				{
 					System.IO.File.Delete(archiveName);
 					mode = ZipArchiveMode.Create;
@@ -188,15 +215,13 @@ namespace Logging
 				using (ZipArchive archive = ZipFile.Open(archiveName, mode))
 				{
 					ZipArchiveEntry entry = archive.CreateEntryFromFile(
-						file,
-						$"{Path.GetFileNameWithoutExtension(file)}.{(mode == ZipArchiveMode.Update ? archive.Entries.Count : 0)}{Path.GetExtension(file)}"
+						CurrentFile,
+						$"{Path.GetFileNameWithoutExtension(CurrentFile)}.{(mode == ZipArchiveMode.Update ? archive.Entries.Count : 0)}{Path.GetExtension(CurrentFile)}"
 					);
 				}
-
-				System.IO.File.Delete(file);
-				Files.Remove(file);
-				if (!Archives.Contains(archiveName))
-					Archives.Add(archiveName);
+				System.IO.File.Delete(CurrentFile);
+				
+				lastArchive = archiveName;
 			}
 		}
 
@@ -237,6 +262,29 @@ namespace Logging
 			FileAdvancerThread.Interrupt();
 			base.Dispose(disposing);
 			FinalizeStream();
+			CurrentFile = null;
+			lastArchive = null;
+		}
+
+		/// <summary>
+		/// Custom event args for the <see cref="Advancing"/> event.
+		/// </summary>
+		public sealed class FileAdvancingEventArgs : EventArgs
+		{
+			/// <summary>
+			/// Gets the old file path that will be disposed by the <see cref="AdvancingWriter"/>.
+			/// </summary>
+			public string OldFile { get; }
+			/// <summary>
+			/// Gets the new file path that will be created and used by the <see cref="AdvancingWriter"/>.
+			/// </summary>
+			public string NewFile { get; }
+
+			internal FileAdvancingEventArgs(string oldFile, string newFile)
+			{
+				OldFile = oldFile;
+				NewFile = newFile;
+			}
 		}
 	}
 }
