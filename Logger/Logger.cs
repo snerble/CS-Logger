@@ -164,6 +164,7 @@ namespace Logging
 			worker = new Thread(Run)
 			{
 				Name = "Logger Worker",
+				IsBackground = true
 			};
 			worker.Start();
 		}
